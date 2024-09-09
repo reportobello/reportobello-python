@@ -1,0 +1,219 @@
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, fields, is_dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Self, overload
+from urllib.parse import quote
+import os
+
+from httpx import ASGITransport, AsyncClient
+
+
+DEFAULT_HOST = "https://reportobello.com"
+
+
+class ReportobelloException(Exception):
+    pass
+
+class ReportobelloMissingApiKey(ReportobelloException):
+    def __str__(self) -> str:
+        return "REPORTOBELLO_API_KEY env var is not set. Set it, or pass API key directly"
+
+class ReportobelloMissingTemplateName(ReportobelloException):
+    pass
+
+class ReportobelloReportBuildFailure(ReportobelloException):
+    error: str
+
+    def __init__(self, error: str) -> None:
+        self.error = error
+
+
+@dataclass(kw_only=True)
+class Template:
+    name: str = ""
+    content: str | None = None
+    file: Path | str | None = None
+    version: int = -1
+
+    # TODO: require exactly either content or file
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            self.name = self.__class__.name
+
+        self.file = self.file or self.__class__.file
+        self.content = self.content or self.__class__.content
+
+        if not self.name:
+            if self.__class__.__name__ == "Template":
+                msg = 'Template name must be set. Use `Template(name="name here", ...)` to set it.'
+            else:
+                msg = 'Template name must be set. Add `name = "name here"` to your class to set it.'
+
+            raise ReportobelloMissingTemplateName(msg)
+
+    @classmethod
+    def from_json(cls, data: Any) -> Self:
+        return cls(content=data.pop("template"), **data)
+
+
+class LazyPdf:
+    client: AsyncClient
+    url: str
+
+    def __init__(self, client: AsyncClient, url: str) -> None:
+        self.client = client
+        self.url = url
+
+    async def save_to(self, path: Path | str) -> None:
+        with open(path, "wb+") as f:
+            resp = await self.client.get(self.url)
+
+            f.write(await resp.aread())
+
+    async def as_blob(self) -> bytes:
+        resp = await self.client.get(self.url)
+
+        return await resp.aread()
+
+
+@dataclass(kw_only=True)
+class Report:
+    filename: str | None
+    requested_version: int
+    actual_version: int
+    template_name: str
+    started_at: datetime
+    finished_at: datetime
+    error_message: str | None = None
+
+    @property
+    def was_successful(self) -> bool:
+        return self.error_message is None
+
+    @classmethod
+    def from_json(cls, data: Any) -> Self:
+        return cls(
+            started_at=datetime.fromisoformat(data.pop("started_at")),
+            finished_at=datetime.fromisoformat(data.pop("finished_at")),
+            **data,
+        )
+
+
+class ReportobelloApi:
+    client: AsyncClient
+
+    def __init__(self, api_key: str | None = None, host: str = DEFAULT_HOST, app = None) -> None:
+        # TODO: close client when class goes out of scope
+
+        if api_key is None:
+            api_key = os.getenv("REPORTOBELLO_API_KEY")
+
+            if not api_key:
+                raise ReportobelloMissingApiKey
+
+        self.client = AsyncClient(
+            transport=ASGITransport(app=app) if app else None,
+            base_url=host,
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+    async def update_env_vars(self, env_vars: Mapping[str, str]) -> None:
+        # TODO: handle error codes
+        await self.client.post("/api/v1/env", json=env_vars)
+
+    async def delete_env_vars(self, keys: list[str]) -> None:
+        # TODO: handle error codes
+
+        escaped = [quote(k) for k in keys]
+
+        await self.client.delete("/api/v1/env", params={"keys": ",".join(escaped)})
+
+    async def create_or_update_template(self, template: Template) -> None:
+        url = f"/api/v1/template/{quote(template.name, safe="")}"
+
+        if template.content is not None:
+            content = template.content
+        elif template.file:
+            content = Path(template.file).read_text()
+        else:
+            assert False
+
+        # TODO: handle error codes
+        await self.client.post(url, content=content, headers={"Content-Type": "application/x-typst"})
+
+    async def get_recent_builds(self, template: Template | str) -> list[Report]:
+        template_name = template.name if isinstance(template, Template) else template
+
+        url = f"/api/v1/template/{quote(template_name, safe="")}/recent"
+
+        # TODO: handle error codes
+        resp = await self.client.get(url)
+
+        return [Report.from_json(r) for r in resp.json()]
+
+    async def get_template_versions(self, template: Template | str) -> list[Template]:
+        template_name = template.name if isinstance(template, Template) else template
+
+        url = f"/api/v1/template/{quote(template_name, safe="")}"
+
+        # TODO: handle error codes
+        resp = await self.client.get(url)
+
+        return [Template.from_json(r) for r in resp.json()]
+
+    @overload
+    async def build_template(
+        self,
+        template: Template,
+        *,
+        preview: bool = False,
+    ) -> LazyPdf:
+        pass
+
+    @overload
+    async def build_template(
+        self,
+        template: Template | str,
+        data: Mapping[str, Any] | Any,
+        *,
+        preview: bool = False,
+    ) -> LazyPdf:
+        pass
+
+    # TODO: support dataclasses and pydantic models
+    async def build_template(
+        self,
+        template: Template | str,
+        data: Mapping[str, Any] | Any | None = None,
+        *,
+        preview: bool = False,
+    ) -> LazyPdf:
+        template_name = template.name if isinstance(template, Template) else template
+
+        url = f"/api/v1/template/{quote(template_name, safe="")}/build?justUrl{'&preview' if preview else ''}"
+
+        if data is None:
+            assert isinstance(template, Template), "if data is unset, template must be a Template"
+
+            data = {}
+
+            template_field_names = {f.name for f in fields(Template)}
+
+            for f in fields(template):
+                if f.name not in template_field_names:
+                    data[f.name] = getattr(template, f.name)
+
+        elif is_dataclass(data):
+            data = asdict(data)
+
+        # TODO: handle error codes
+        resp = await self.client.post(url, json=data, follow_redirects=False)
+
+        if resp.status_code == 400:
+            raise ReportobelloReportBuildFailure(resp.text)
+
+        assert resp.status_code == 200
+
+        return LazyPdf(client=self.client, url=resp.text)

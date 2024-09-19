@@ -182,7 +182,7 @@ class ReportobelloApi:
     ) -> LazyPdf:
         pass
 
-    # TODO: support dataclasses and pydantic models
+    # TODO: support pydantic models
     async def build_template(
         self,
         template: Template | str,
@@ -207,6 +207,11 @@ class ReportobelloApi:
 
         elif is_dataclass(data):
             data = asdict(data)
+
+        data = {
+            "data": data,
+            "content_type": "application/json",
+        }
 
         # TODO: handle error codes
         resp = await self.client.post(url, json=data, follow_redirects=False)

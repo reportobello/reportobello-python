@@ -28,6 +28,12 @@ class ReportobelloReportBuildFailure(ReportobelloException):
     def __init__(self, error: str) -> None:
         self.error = error
 
+class ReportobelloTemplateNotFound(ReportobelloException):
+    error: str
+
+    def __init__(self, error: str) -> None:
+        self.error = error
+
 
 @dataclass(kw_only=True)
 class Template:
@@ -94,10 +100,15 @@ class Report:
 
     @classmethod
     def from_json(cls, data: Any) -> Self:
+        started_at = datetime.fromisoformat(data.pop("started_at"))
+        finished_at = datetime.fromisoformat(data.pop("finished_at"))
+
+        field_names = [f.name for f in fields(cls)]
+
         return cls(
-            started_at=datetime.fromisoformat(data.pop("started_at")),
-            finished_at=datetime.fromisoformat(data.pop("finished_at")),
-            **data,
+            started_at=started_at,
+            finished_at=finished_at,
+            **{k: v for k, v in data.items() if k in field_names},
         )
 
 
@@ -143,13 +154,19 @@ class ReportobelloApi:
         # TODO: handle error codes
         await self.client.post(url, content=content, headers={"Content-Type": "application/x-typst"})
 
-    async def get_recent_builds(self, template: Template | str) -> list[Report]:
+    async def get_recent_builds(self, template: Template | str, before: datetime | None = None) -> list[Report]:
         template_name = template.name if isinstance(template, Template) else template
 
         url = f"/api/v1/template/{quote(template_name, safe="")}/recent"
 
-        # TODO: handle error codes
+        if before is not None:
+            url += f"?before={quote(before.isoformat())}"
+
+        # TODO: handle more error codes
         resp = await self.client.get(url)
+
+        if resp.status_code == 404:
+            raise ReportobelloTemplateNotFound(resp.text)
 
         return [Report.from_json(r) for r in resp.json()]
 
@@ -158,8 +175,11 @@ class ReportobelloApi:
 
         url = f"/api/v1/template/{quote(template_name, safe="")}"
 
-        # TODO: handle error codes
+        # TODO: handle more error codes
         resp = await self.client.get(url)
+
+        if resp.status_code == 404:
+            raise ReportobelloTemplateNotFound(resp.text)
 
         return [Template.from_json(r) for r in resp.json()]
 
@@ -219,6 +239,14 @@ class ReportobelloApi:
         if resp.status_code == 400:
             raise ReportobelloReportBuildFailure(resp.text)
 
+        if resp.status_code == 404:
+            raise ReportobelloTemplateNotFound(resp.text)
+
         assert resp.status_code == 200
 
         return LazyPdf(client=self.client, url=resp.text)
+
+    async def delete_template(self, template: Template | str) -> None:
+        template_name = template.name if isinstance(template, Template) else template
+
+        await self.client.delete(f"/api/v1/template/{quote(template_name, safe="")}")

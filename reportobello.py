@@ -115,7 +115,7 @@ class Report:
 class ReportobelloApi:
     client: AsyncClient
 
-    def __init__(self, api_key: str | None = None, host: str = DEFAULT_HOST, app = None) -> None:
+    def __init__(self, api_key: str | None = None, host: str | None = None, app = None) -> None:
         # TODO: close client when class goes out of scope
 
         if api_key is None:
@@ -123,6 +123,9 @@ class ReportobelloApi:
 
             if not api_key:
                 raise ReportobelloMissingApiKey
+
+        if host is None:
+            host = os.getenv("REPORTOBELLO_HOST", os.getenv("REPORTOBELLO_DOMAIN", DEFAULT_HOST))
 
         self.client = AsyncClient(
             transport=ASGITransport(app=app) if app else None,

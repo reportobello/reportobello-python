@@ -175,6 +175,14 @@ class ReportobelloApi:
 
         return [Report.from_json(r) for r in resp.json()]
 
+    async def get_templates(self) -> list[Template]:
+        url = "/api/v1/templates"
+
+        # TODO: handle more error codes
+        resp = await self.client.get(url)
+
+        return [Template.from_json(r) for r in resp.json()]
+
     async def get_template_versions(self, template: Template | str) -> list[Template]:
         template_name = template.name if isinstance(template, Template) else template
 

@@ -144,7 +144,7 @@ class ReportobelloApi:
 
         await self.client.delete("/api/v1/env", params={"keys": ",".join(escaped)})
 
-    async def create_or_update_template(self, template: Template) -> None:
+    async def create_or_update_template(self, template: Template) -> Template:
         url = f"/api/v1/template/{quote(template.name, safe="")}"
 
         if template.content is not None:
@@ -155,7 +155,9 @@ class ReportobelloApi:
             assert False
 
         # TODO: handle error codes
-        await self.client.post(url, content=content, headers={"Content-Type": "application/x-typst"})
+        resp = await self.client.post(url, content=content, headers={"Content-Type": "application/x-typst"})
+
+        return Template.from_json(resp.json())
 
     async def get_recent_builds(self, template: Template | str, before: datetime | None = None) -> list[Report]:
         template_name = template.name if isinstance(template, Template) else template

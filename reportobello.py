@@ -159,6 +159,24 @@ class ReportobelloApi:
 
         return Template.from_json(resp.json())
 
+    async def upload_data_files(self, template: Template | str, *files: Path | str) -> None:  # type: ignore
+        if not files:
+            return
+
+        template_name = template.name if isinstance(template, Template) else template
+
+        url = f"/api/v1/template/{quote(template_name, safe="")}/files"
+
+        files: list[Path] = [Path(file) for file in files]
+
+        resp = await self.client.post(url, files={file.name: (file.name, file.read_text()) for file in files})
+
+        if resp.status_code == 404:
+            raise ReportobelloTemplateNotFound(resp.text)
+
+        if resp.status_code == 400:
+            raise ReportobelloException(resp.text)
+
     async def get_recent_builds(self, template: Template | str, before: datetime | None = None) -> list[Report]:
         template_name = template.name if isinstance(template, Template) else template
 

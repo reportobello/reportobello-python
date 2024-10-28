@@ -1,6 +1,9 @@
 # Reportobello
 
-Python API library for Reportobello.
+Python SDK for the Reportobello API.
+
+This package also includes the Reportobello CLI, `rpbl`.
+To learn more about the CLI, read the docs [here](https://reportobello.com/docs/cli.html).
 
 ## Installing
 

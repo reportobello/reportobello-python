@@ -1,7 +1,8 @@
 import asyncio
+import sys
 from dataclasses import asdict
 from pathlib import Path
-import sys
+from difflib import unified_diff
 from argparse import ArgumentParser, Namespace
 
 from dotenv import dotenv_values, load_dotenv
@@ -9,6 +10,7 @@ import rich
 import rich.box
 import rich.console
 import rich.table
+from rich.text import Text
 import typst
 
 from reportobello import ReportobelloApi, ReportobelloMissingApiKey, ReportobelloTemplateNotFound, Template
@@ -47,7 +49,8 @@ async def ls_command(arg: Namespace):
     else:
         templates = await api.get_templates()
 
-    show_all = bool(arg.a)
+    show_diff = bool(arg.diff)
+    show_all = show_diff or bool(arg.all)
 
     if arg.format == "json":
         data = [asdict(t) for t in templates]
@@ -69,9 +72,40 @@ async def ls_command(arg: Namespace):
     if show_all:
         table.add_column("Template")
 
-    for template in templates:
+    for i, template in enumerate(templates):
         if show_all:
-            table.add_row(template.name, str(template.version), template.content)
+            if show_diff and i < len(templates) - 1:
+                a = (templates[i + 1].content or "").splitlines()
+                b = (template.content or "").splitlines()
+
+                lines = list(unified_diff(a, b, lineterm=""))
+
+                if not lines:
+                    diff = Text("No diff", style="bright_black")
+
+                else:
+                    lines = lines[2:]
+                    items = []
+
+                    for i, line in enumerate(lines):
+                        if i < len(lines) - 1:
+                            line += "\n"
+
+                        if line.startswith("-"):
+                            items.append((line, "red"))
+                        elif line.startswith("+"):
+                            items.append((line, "green"))
+                        elif line.startswith("@"):
+                            items.append((line, "cyan"))
+                        else:
+                            items.append(line)
+
+                    diff = Text.assemble(*items)
+
+            else:
+                diff = template.content
+
+            table.add_row(template.name, str(template.version), diff)
 
         else:
             table.add_row(template.name, str(template.version))
@@ -187,7 +221,8 @@ async def async_main() -> None:
 
     ls = subparsers.add_parser("ls")
     ls.add_argument("template", nargs="?", help="Only show a specific template. Defaults to all templates")
-    ls.add_argument("-a", action="store_true", help="Show all data")
+    ls.add_argument("-a", "--all", action="store_true", help="Show all data")
+    ls.add_argument("--diff", action="store_true", help="Only show diffs between templates. Implies `-a`")
     ls.add_argument("--format", choices=("pretty", "json"), default="pretty", help="Change output format")
     ls.set_defaults(func=ls_command)
 

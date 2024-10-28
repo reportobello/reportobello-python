@@ -134,7 +134,18 @@ async def pull_command(arg: Namespace):
     api = get_api()
 
     try:
-        template = (await api.get_template_versions(arg.template))[0]
+        templates = await api.get_template_versions(arg.template)
+
+        if arg.version == -1:
+            template = templates[0]
+        else:
+            for t in templates:
+                if t.version == arg.version:
+                    template = t
+                    break
+            else:
+                print(f"Template version {arg.version} was not found (latest is v{templates[0].version})", file=sys.stderr)
+                sys.exit(1)
 
     except ReportobelloTemplateNotFound:
         print(f"Template `{arg.template}` was not found", file=sys.stderr)
@@ -233,6 +244,7 @@ async def async_main() -> None:
 
     pull = subparsers.add_parser("pull")
     pull.add_argument("template", help="Template to download")
+    pull.add_argument("-v", "--version", type=int, default=-1, help="Template to download")
     pull.add_argument("filename", nargs="?", help="Download location. Defaults to template name with `.typ` extension added")
     pull.set_defaults(func=pull_command)
 

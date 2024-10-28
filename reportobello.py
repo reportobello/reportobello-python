@@ -133,6 +133,11 @@ class ReportobelloApi:
             headers={"Authorization": f"Bearer {api_key}"},
         )
 
+    async def get_env_vars(self) -> dict[str, str]:
+        resp = await self.client.get("/api/v1/env")
+
+        return resp.json()
+
     async def update_env_vars(self, env_vars: Mapping[str, str]) -> None:
         # TODO: handle error codes
         await self.client.post("/api/v1/env", json=env_vars)

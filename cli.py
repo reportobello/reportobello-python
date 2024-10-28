@@ -264,6 +264,42 @@ async def builds_ls_command(arg: Namespace):
         console.print(table)
 
 
+async def env_ls_command(arg: Namespace):
+    api = get_api()
+
+    env_vars = await api.get_env_vars()
+
+    if getattr(arg, "format", None) == "json":
+        console.print_json(data=env_vars)
+
+    else:
+        table = rich.table.Table(box=rich.box.ROUNDED, show_lines=True)
+
+        table.add_column("Key")
+        table.add_column("Value")
+
+        for k, v in env_vars.items():
+            table.add_row(k, v)
+
+        console.print(table)
+
+
+async def env_set_command(arg: Namespace):
+    api = get_api()
+
+    await api.update_env_vars({arg.key: arg.value})
+
+    print("Environment variables updated!")
+
+
+async def env_rm_command(arg: Namespace):
+    api = get_api()
+
+    await api.delete_env_vars(keys=arg.key)
+
+    print("Environment variables deleted!")
+
+
 async def async_main() -> None:
     parser = ArgumentParser(description="Reportobello CLI")
 
@@ -307,6 +343,20 @@ async def async_main() -> None:
     builds_ls.add_argument("template", help="Show recent builds for template")
     builds_ls.add_argument("--format", choices=("pretty", "json"), default="pretty", help="Change output format")
     builds_ls.set_defaults(func=builds_ls_command)
+
+    env = subparsers.add_parser("env")
+    env.set_defaults(func=env_ls_command)
+    env_subparser = env.add_subparsers()
+    env_ls = env_subparser.add_parser("ls")
+    env_ls.add_argument("--format", choices=("pretty", "json"), default="pretty", help="Change output format")
+    env_ls.set_defaults(func=env_ls_command)
+    env_set = env_subparser.add_parser("set")
+    env_set.add_argument("key")
+    env_set.add_argument("value")
+    env_set.set_defaults(func=env_set_command)
+    env_rm = env_subparser.add_parser("rm")
+    env_rm.add_argument("key", nargs="+")
+    env_rm.set_defaults(func=env_rm_command)
 
     args = parser.parse_args(sys.argv[1:])
 

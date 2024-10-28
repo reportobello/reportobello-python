@@ -224,6 +224,45 @@ async def watch_command(arg: Namespace):
         await asyncio.sleep(0.01)
 
 
+async def builds_ls_command(arg: Namespace):
+    api = get_api()
+
+    reports = await api.get_recent_builds(arg.template)
+
+    if arg.format == "json":
+        out = []
+
+        for report in reports:
+            d = asdict(report)
+            d["started_at"] = report.started_at.isoformat()
+            d["finished_at"] = report.finished_at.isoformat()
+
+            out.append(d)
+
+        console.print_json(data=out)
+
+    else:
+        table = rich.table.Table(box=rich.box.ROUNDED, show_lines=True)
+
+        table.add_column("Started at")
+        table.add_column("Finished at")
+        table.add_column("Requested/Used version")
+        table.add_column("Filename")
+        table.add_column("Error")
+
+        for report in reports:
+            requested_version = "latest" if report.requested_version == -1 else report.requested_version
+
+            table.add_row(
+                report.started_at.isoformat(),
+                report.finished_at.isoformat(),
+                f"{requested_version} / {report.actual_version}",
+                report.filename,
+                Text((report.error_message or "").strip(), style="red"),
+            )
+
+        console.print(table)
+
 
 async def async_main() -> None:
     parser = ArgumentParser(description="Reportobello CLI")
@@ -261,6 +300,13 @@ async def async_main() -> None:
     watch.add_argument("template", help="Template file to watch")
     watch.add_argument("--env", metavar="KEY=VALUE", action="append", help="Pass an environment variable to the template")
     watch.set_defaults(func=watch_command)
+
+    builds = subparsers.add_parser("builds")
+    builds_subparser = builds.add_subparsers()
+    builds_ls = builds_subparser.add_parser("ls")
+    builds_ls.add_argument("template", help="Show recent builds for template")
+    builds_ls.add_argument("--format", choices=("pretty", "json"), default="pretty", help="Change output format")
+    builds_ls.set_defaults(func=builds_ls_command)
 
     args = parser.parse_args(sys.argv[1:])
 

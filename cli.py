@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -180,14 +181,43 @@ async def build_command(arg: Namespace):
     input_file = Path(arg.template)
     output_file = input_file.with_suffix(".pdf")
 
-    compiler = get_typst_compiler(input_file, arg.env or [])
+    if arg.local:
+        if arg.json:
+            print("Warning: `--json` is ignored when `--local` is set")
 
-    try:
-        compiler.compile(output_file)
+        compiler = get_typst_compiler(input_file, arg.env or [])
 
-    except RuntimeError as ex:
-        print(f"\x1b[31m{str(ex).strip()}\x1b[0m\n", sys.stderr)
-        sys.exit(1)
+        try:
+            compiler.compile(output_file)
+
+        except RuntimeError as ex:
+            print(f"\x1b[31m{str(ex).strip()}\x1b[0m\n", sys.stderr)
+            sys.exit(1)
+
+    else:
+        if arg.env:
+            print("Warning: `--env` is ignored when `--local` is unset (for now)")
+
+        api = get_api()
+
+        if arg.json == "-":
+            data = json.loads(sys.stdin.read())
+        else:
+            data = json.loads(Path(arg.json or "data.json").read_text())
+
+        try:
+            pdf = await api.build_template(Template(name=arg.template), data)
+
+        except ReportobelloTemplateNotFound as ex:
+            if arg.template.endswith((".typ", ".typst")):
+                print(ex)
+                print(f"Did you mean to build `{Path(arg.template).with_suffix('')}`?")
+                sys.exit(1)
+
+            else:
+                raise
+
+        await pdf.save_to(output_file)
 
     print(f"Saving PDF to {output_file}")
 
@@ -330,7 +360,9 @@ async def async_main() -> None:
 
     build = subparsers.add_parser("build")
     build.add_argument("template", help="Template file to build")
-    build.add_argument("--env", metavar="KEY=VALUE", action="append", help="Pass an environment variable to the template")
+    build.add_argument("json", nargs="?", help="JSON data to use for the report. Use `-` for stdin. Defaults to `data.json`. Ignored if `--local` is set")
+    build.add_argument("--local", action="store_true", help="Build report using the Reportobello instance instead of building locally")
+    build.add_argument("--env", metavar="KEY=VALUE", action="append", help="Pass an environment variable to the template. Currently this is only used when `--local` is set")
     build.set_defaults(func=build_command)
 
     watch = subparsers.add_parser("watch")

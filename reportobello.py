@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import datetime
@@ -6,7 +8,7 @@ from typing import Any, Self, overload
 from urllib.parse import quote
 import os
 
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 
 
 DEFAULT_HOST = "https://reportobello.com"
@@ -29,6 +31,21 @@ class ReportobelloReportBuildFailure(ReportobelloException):
         self.error = error
 
 class ReportobelloTemplateNotFound(ReportobelloException):
+    error: str
+
+    def __init__(self, error: str) -> None:
+        self.error = error
+
+class ReportobelloFileTooBig(ReportobelloException):
+    pass
+
+class ReportobelloUnauthorized(ReportobelloException):
+    error: str
+
+    def __init__(self, error: str) -> None:
+        self.error = error
+
+class ReportobelloServerError(ReportobelloException):
     error: str
 
     def __init__(self, error: str) -> None:
@@ -65,21 +82,21 @@ class Template:
 
 
 class LazyPdf:
-    client: AsyncClient
     url: str
+    _api: ReportobelloApi
 
-    def __init__(self, client: AsyncClient, url: str) -> None:
-        self.client = client
+    def __init__(self, api: ReportobelloApi, url: str) -> None:
+        self._api = api
         self.url = url
 
     async def save_to(self, path: Path | str) -> None:
         with open(path, "wb+") as f:
-            resp = await self.client.get(self.url)
+            resp = await self._api.get(self.url)
 
             f.write(await resp.aread())
 
     async def as_blob(self) -> bytes:
-        resp = await self.client.get(self.url)
+        resp = await self._api.get(self.url)
 
         return await resp.aread()
 
@@ -134,20 +151,17 @@ class ReportobelloApi:
         )
 
     async def get_env_vars(self) -> dict[str, str]:
-        resp = await self.client.get("/api/v1/env")
+        resp = await self.get("/api/v1/env")
 
         return resp.json()
 
     async def update_env_vars(self, env_vars: Mapping[str, str]) -> None:
-        # TODO: handle error codes
-        await self.client.post("/api/v1/env", json=env_vars)
+        await self.post("/api/v1/env", json=env_vars)
 
     async def delete_env_vars(self, keys: list[str]) -> None:
-        # TODO: handle error codes
-
         escaped = [quote(k) for k in keys]
 
-        await self.client.delete("/api/v1/env", params={"keys": ",".join(escaped)})
+        await self.delete("/api/v1/env", params={"keys": ",".join(escaped)})
 
     async def create_or_update_template(self, template: Template) -> Template:
         url = f"/api/v1/template/{quote(template.name, safe="")}"
@@ -159,8 +173,7 @@ class ReportobelloApi:
         else:
             assert False
 
-        # TODO: handle error codes
-        resp = await self.client.post(url, content=content, headers={"Content-Type": "application/x-typst"})
+        resp = await self.post(url, content=content, headers={"Content-Type": "application/x-typst"})
 
         return Template.from_json(resp.json())
 
@@ -174,13 +187,16 @@ class ReportobelloApi:
 
         files: list[Path] = [Path(file) for file in files]
 
-        resp = await self.client.post(url, files={file.name: (file.name, file.read_text()) for file in files})
+        resp = await self.post(url, files={file.name: (file.name, file.read_text()) for file in files})
+
+        if resp.status_code == 400:
+            raise ReportobelloException(resp.text)
 
         if resp.status_code == 404:
             raise ReportobelloTemplateNotFound(resp.text)
 
-        if resp.status_code == 400:
-            raise ReportobelloException(resp.text)
+        if resp.status_code == 413:
+            raise ReportobelloFileTooBig(resp.text)
 
     async def get_recent_builds(self, template: Template | str, before: datetime | None = None) -> list[Report]:
         template_name = template.name if isinstance(template, Template) else template
@@ -190,8 +206,7 @@ class ReportobelloApi:
         if before is not None:
             url += f"?before={quote(before.isoformat())}"
 
-        # TODO: handle more error codes
-        resp = await self.client.get(url)
+        resp = await self.get(url)
 
         if resp.status_code == 404:
             raise ReportobelloTemplateNotFound(resp.text)
@@ -201,8 +216,7 @@ class ReportobelloApi:
     async def get_templates(self) -> list[Template]:
         url = "/api/v1/templates"
 
-        # TODO: handle more error codes
-        resp = await self.client.get(url)
+        resp = await self.get(url)
 
         return [Template.from_json(r) for r in resp.json()]
 
@@ -211,8 +225,7 @@ class ReportobelloApi:
 
         url = f"/api/v1/template/{quote(template_name, safe="")}"
 
-        # TODO: handle more error codes
-        resp = await self.client.get(url)
+        resp = await self.get(url)
 
         if resp.status_code == 404:
             raise ReportobelloTemplateNotFound(resp.text)
@@ -220,12 +233,7 @@ class ReportobelloApi:
         return [Template.from_json(r) for r in resp.json()]
 
     @overload
-    async def build_template(
-        self,
-        template: Template,
-        *,
-        preview: bool = False,
-    ) -> LazyPdf:
+    async def build_template(self, template: Template) -> LazyPdf:
         pass
 
     @overload
@@ -233,8 +241,6 @@ class ReportobelloApi:
         self,
         template: Template | str,
         data: Mapping[str, Any] | Any,
-        *,
-        preview: bool = False,
     ) -> LazyPdf:
         pass
 
@@ -243,12 +249,10 @@ class ReportobelloApi:
         self,
         template: Template | str,
         data: Mapping[str, Any] | Any | None = None,
-        *,
-        preview: bool = False,
     ) -> LazyPdf:
         template_name = template.name if isinstance(template, Template) else template
 
-        url = f"/api/v1/template/{quote(template_name, safe="")}/build?justUrl{'&preview' if preview else ''}"
+        url = f"/api/v1/template/{quote(template_name, safe="")}/build?justUrl"
 
         if data is None:
             assert isinstance(template, Template), "if data is unset, template must be a Template"
@@ -269,8 +273,7 @@ class ReportobelloApi:
             "content_type": "application/json",
         }
 
-        # TODO: handle error codes
-        resp = await self.client.post(url, json=data, follow_redirects=False)
+        resp = await self.post(url, json=data, follow_redirects=False)
 
         if resp.status_code == 400:
             raise ReportobelloReportBuildFailure(resp.text)
@@ -280,9 +283,38 @@ class ReportobelloApi:
 
         assert resp.status_code == 200
 
-        return LazyPdf(client=self.client, url=resp.text)
+        return LazyPdf(self, resp.text)
 
     async def delete_template(self, template: Template | str) -> None:
         template_name = template.name if isinstance(template, Template) else template
 
-        await self.client.delete(f"/api/v1/template/{quote(template_name, safe="")}")
+        await self.delete(f"/api/v1/template/{quote(template_name, safe="")}")
+
+    async def get(self, *args, **kwargs) -> Response:
+        resp = await self.client.get(*args, **kwargs)
+
+        self._handle_common_error_codes(resp)
+
+        return resp
+
+    async def post(self, *args, **kwargs) -> Response:
+        resp = await self.client.post(*args, **kwargs)
+
+        self._handle_common_error_codes(resp)
+
+        return resp
+
+    async def delete(self, *args, **kwargs) -> Response:
+        resp = await self.client.delete(*args, **kwargs)
+
+        self._handle_common_error_codes(resp)
+
+        return resp
+
+    @staticmethod
+    def _handle_common_error_codes(resp: Response) -> None:
+        if resp.status_code == 401:
+            raise ReportobelloUnauthorized(resp.text)
+
+        if resp.status_code >= 500:
+            raise ReportobelloServerError(resp.reason_phrase)

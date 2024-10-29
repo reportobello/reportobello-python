@@ -6,6 +6,7 @@ from difflib import unified_diff
 from argparse import ArgumentParser, Namespace
 
 from dotenv import dotenv_values, load_dotenv
+import httpx
 import rich
 import rich.box
 import rich.console
@@ -13,7 +14,7 @@ import rich.table
 from rich.text import Text
 import typst
 
-from reportobello import ReportobelloApi, ReportobelloMissingApiKey, ReportobelloTemplateNotFound, Template
+from reportobello import ReportobelloApi, ReportobelloMissingApiKey, ReportobelloTemplateNotFound, ReportobelloUnauthorized, Template
 
 
 load_dotenv()
@@ -370,6 +371,36 @@ async def async_main() -> None:
 def main():
     try:
         asyncio.run(async_main())
+
+    except ReportobelloUnauthorized:
+        err = """\
+Unauthorized: Is your API key or host URL set incorrectly?
+
+Make sure you setup your `.env `file properly:
+
+REPORTOBELLO_API_KEY="rpbl_..."
+REPORTOBELLO_HOST="https://example.com"
+
+Or `export` the env vars in your terminal:
+
+export REPORTOBELLO_API_KEY="rpbl_..."
+export REPORTOBELLO_HOST="https://example.com"
+"""
+
+        print(err, file=sys.stderr)
+        sys.exit(1)
+
+    except httpx.ConnectError:
+        api = get_api()
+
+        print(f"Could not connect to `{api.client.base_url}`", file=sys.stderr)
+        sys.exit(1)
+
+    except httpx.UnsupportedProtocol:
+        api = get_api()
+
+        print(f"Invalid URL `{api.client.base_url}`. Did you forget to add `https://` or `http://`?", file=sys.stderr)
+        sys.exit(1)
 
     except KeyboardInterrupt:
         print("\nExiting...")

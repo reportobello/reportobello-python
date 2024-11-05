@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reportobello"
-version = "0.2.3"
+version = "0.2.4"
 description = "Python SDK for the Reportobello API"
 authors = [{name = "dosisod"}]
 license = {text = "LGPL-3.0-or-later"}

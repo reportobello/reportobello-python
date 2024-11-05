@@ -8,7 +8,12 @@ from typing import Any, Self, overload
 from urllib.parse import quote
 import os
 
+from dotenv import load_dotenv
+
 from httpx import ASGITransport, AsyncClient, Response
+
+
+load_dotenv()
 
 
 DEFAULT_HOST = "https://reportobello.com"

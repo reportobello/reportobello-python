@@ -6,7 +6,7 @@ from pathlib import Path
 from difflib import unified_diff
 from argparse import ArgumentParser, Namespace
 
-from dotenv import dotenv_values, load_dotenv
+from dotenv import dotenv_values
 import httpx
 import rich
 import rich.box
@@ -17,8 +17,6 @@ import typst
 
 from reportobello import ReportobelloApi, ReportobelloMissingApiKey, ReportobelloTemplateNotFound, ReportobelloUnauthorized, Template
 
-
-load_dotenv()
 
 env_file = {k: v or "" for k, v in dotenv_values().items()}
 

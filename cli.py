@@ -206,7 +206,7 @@ async def build_command(arg: Namespace):
             data = json.loads(Path(arg.json or "data.json").read_text())
 
         try:
-            pdf = await api.build_template(Template(name=arg.template), data)
+            pdf = await api.build_template(Template(name=arg.template), data, is_pure=arg.pure)
 
         except ReportobelloTemplateNotFound as ex:
             if arg.template.endswith((".typ", ".typst")):
@@ -363,6 +363,7 @@ async def async_main() -> None:
     build.add_argument("json", nargs="?", help="JSON data to use for the report. Use `-` for stdin. Defaults to `data.json`. Ignored if `--local` is set")
     build.add_argument("--local", action="store_true", help="Build report using the Reportobello instance instead of building locally")
     build.add_argument("--env", metavar="KEY=VALUE", action="append", help="Pass an environment variable to the template. Currently this is only used when `--local` is set")
+    build.add_argument("--pure", action="store_true", help="Build a pure PDF. Ignored if `--local` is set")
     build.set_defaults(func=build_command)
 
     watch = subparsers.add_parser("watch")

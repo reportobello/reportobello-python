@@ -233,7 +233,7 @@ class ReportobelloApi:
         return [Template.from_json(r) for r in resp.json()]
 
     @overload
-    async def build_template(self, template: Template) -> LazyPdf:
+    async def build_template(self, template: Template, is_pure: bool = False) -> LazyPdf:
         pass
 
     @overload
@@ -241,6 +241,7 @@ class ReportobelloApi:
         self,
         template: Template | str,
         data: Mapping[str, Any] | Any,
+        is_pure: bool = False,
     ) -> LazyPdf:
         pass
 
@@ -249,10 +250,11 @@ class ReportobelloApi:
         self,
         template: Template | str,
         data: Mapping[str, Any] | Any | None = None,
+        is_pure: bool = False,
     ) -> LazyPdf:
         template_name = template.name if isinstance(template, Template) else template
 
-        url = f"/api/v1/template/{quote(template_name, safe="")}/build?justUrl"
+        url = f"/api/v1/template/{quote(template_name, safe="")}/build?justUrl{'&isPure' if is_pure else ''}"
 
         if data is None:
             assert isinstance(template, Template), "if data is unset, template must be a Template"

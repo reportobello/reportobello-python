@@ -20,6 +20,7 @@ dependencies = [
   "rich >= 13.8.0",
   "typst >= 0.11.1",
   "python-dotenv >= 1.0.1",
+  "platformdirs >= 4.3.6",
 ]
 
 [project.scripts]
@@ -30,3 +31,7 @@ Source = "https://github.com/reportobello/reportobello-python"
 
 [tool.setuptools]
 py-modules = ["cli", "reportobello"]
+packages = ["typst"]
+
+[tool.setuptools.package-data]
+typst = ["**/*"]

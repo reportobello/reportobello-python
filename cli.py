@@ -1,13 +1,16 @@
 import asyncio
 import json
+import shutil
 import sys
 from dataclasses import asdict
 from pathlib import Path
 from difflib import unified_diff
 from argparse import ArgumentParser, Namespace
+from typing import Any
 
 from dotenv import dotenv_values
 import httpx
+import platformdirs
 import rich
 import rich.box
 import rich.console
@@ -175,15 +178,35 @@ def get_typst_compiler(file: Path, env_vars: list[str]) -> typst.Compiler:
     return typst.Compiler(file, sys_inputs=env_file | env_args)
 
 
+def get_json_data_from_arg(filename: str | None) -> Any:
+    if filename == "-":
+        return json.loads(sys.stdin.read())
+
+    file = Path(filename or "data.json")
+
+    if file.exists():
+        return json.loads(file.read_text())
+
+    print("No JSON file found, defaulting to `{}`", file=sys.stderr)
+
+    return {}
+
+
+def json_minify(d: Any) -> str:
+    return json.dumps(d, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
+
+
 async def build_command(arg: Namespace):
     input_file = Path(arg.template)
     output_file = input_file.with_suffix(".pdf")
 
     if arg.local:
-        if arg.json:
-            print("Warning: `--json` is ignored when `--local` is set")
+        install_typst_packages()
 
-        compiler = get_typst_compiler(input_file, arg.env or [])
+        data = get_json_data_from_arg(arg.json)
+        extra = [f"__RPBL_JSON_PAYLOAD={json_minify(data)}"]
+
+        compiler = get_typst_compiler(input_file, (arg.env or []) + extra)
 
         try:
             compiler.compile(output_file)
@@ -198,10 +221,7 @@ async def build_command(arg: Namespace):
 
         api = get_api()
 
-        if arg.json == "-":
-            data = json.loads(sys.stdin.read())
-        else:
-            data = json.loads(Path(arg.json or "data.json").read_text())
+        data = get_json_data_from_arg(arg.json)
 
         try:
             pdf = await api.build_template(Template(name=arg.template), data, is_pure=arg.pure)
@@ -221,10 +241,10 @@ async def build_command(arg: Namespace):
 
 
 async def watch_command(arg: Namespace):
+    install_typst_packages()
+
     input_file = Path(arg.template)
     output_file = input_file.with_suffix(".pdf")
-
-    compiler = get_typst_compiler(input_file, arg.env or [])
 
     old_mtime = 0
 
@@ -244,6 +264,12 @@ async def watch_command(arg: Namespace):
 
         try:
             print(f"Saving PDF to {output_file}")
+
+            # TODO: watch changes to JSON file (if not from stdin)
+            data = get_json_data_from_arg(arg.json)
+            extra = [f"__RPBL_JSON_PAYLOAD={json_minify(data)}"]
+
+            compiler = get_typst_compiler(input_file, (arg.env or []) + extra)
 
             compiler.compile(output_file)
 
@@ -329,6 +355,24 @@ async def env_rm_command(arg: Namespace):
     print("Environment variables deleted!")
 
 
+def install_typst_packages() -> None:
+    local_package_dir = Path(__file__).parent / "typst"
+    typst_package_dir = Path(platformdirs.user_data_dir("typst", ensure_exists=True))
+
+    local_package_count = len(list((local_package_dir / "packages/rpbl/util").iterdir()))
+
+    try:
+        typst_package_count = len(list((typst_package_dir / "packages/rpbl/util").iterdir()))
+
+    except:
+        typst_package_count = -1
+
+    if local_package_count != typst_package_count:
+        print(f"Installing latest Reportobello Typst packages to {typst_package_dir}")
+
+        shutil.copytree(local_package_dir, typst_package_dir, dirs_exist_ok=True)
+
+
 async def async_main() -> None:
     parser = ArgumentParser(description="Reportobello CLI")
 
@@ -358,7 +402,7 @@ async def async_main() -> None:
 
     build = subparsers.add_parser("build")
     build.add_argument("template", help="Template file to build")
-    build.add_argument("json", nargs="?", help="JSON data to use for the report. Use `-` for stdin. Defaults to `data.json`. Ignored if `--local` is set")
+    build.add_argument("json", nargs="?", help="JSON data to use for the report. Use `-` for stdin. Defaults to `data.json`")
     build.add_argument("--local", action="store_true", help="Build report using the Reportobello instance instead of building locally")
     build.add_argument("--env", metavar="KEY=VALUE", action="append", help="Pass an environment variable to the template. Currently this is only used when `--local` is set")
     build.add_argument("--pure", action="store_true", help="Build a pure PDF. Ignored if `--local` is set")
@@ -366,6 +410,7 @@ async def async_main() -> None:
 
     watch = subparsers.add_parser("watch")
     watch.add_argument("template", help="Template file to watch")
+    watch.add_argument("json", nargs="?", help="JSON data to use for the report. Use `-` for stdin. Defaults to `data.json`")
     watch.add_argument("--env", metavar="KEY=VALUE", action="append", help="Pass an environment variable to the template")
     watch.set_defaults(func=watch_command)
 

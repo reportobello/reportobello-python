@@ -228,8 +228,17 @@ async def build_command(arg: Namespace):
 
         except ReportobelloTemplateNotFound as ex:
             if arg.template.endswith((".typ", ".typst")):
-                print(ex)
-                print(f"Did you mean to build `{Path(arg.template).with_suffix('')}`?")
+                msg = f"""\
+{ex}
+
+Did you mean to build `{Path(arg.template).with_suffix('')}` instead?
+
+If you meant to build `{arg.template}` locally, use the `--local` flag\
+"""
+
+
+                print(msg, file=sys.stderr)
+
                 sys.exit(1)
 
             else:
